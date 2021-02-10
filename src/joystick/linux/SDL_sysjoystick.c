@@ -87,6 +87,7 @@
 #if 0
 #define DEBUG_INPUT_EVENTS 1
 #endif
+#define SDL_DEVICE_S30 1
 
 typedef enum
 {
@@ -95,7 +96,9 @@ typedef enum
     ENUMERATION_FALLBACK
 } EnumerationMethod;
 
+#ifndef SDL_DEVICE_S30
 static EnumerationMethod enumeration_method = ENUMERATION_UNSET;
+#endif
 
 static int MaybeAddDevice(const char *path);
 static int MaybeRemoveDevice(const char *path);
@@ -152,6 +155,7 @@ IsVirtualJoystick(Uint16 vendor, Uint16 product, Uint16 version, const char *nam
 }
 #endif /* SDL_JOYSTICK_HIDAPI */
 
+#ifndef SDL_DEVICE_S30
 static int
 GuessIsJoystick(int fd)
 {
@@ -176,6 +180,7 @@ GuessIsJoystick(int fd)
 
     return 0;
 }
+#endif
 
 static int
 IsJoystick(int fd, char **name_return, SDL_JoystickGUID *guid)
@@ -185,10 +190,12 @@ IsJoystick(int fd, char **name_return, SDL_JoystickGUID *guid)
     char *name;
     char product_string[128];
 
+#ifndef SDL_DEVICE_S30
     /* When udev is enabled we only get joystick devices here, so there's no need to test them */
     if (enumeration_method != ENUMERATION_LIBUDEV && !GuessIsJoystick(fd)) {
         return 0;
     }
+#endif
 
     if (ioctl(fd, EVIOCGID, &inpid) < 0) {
         return 0;
@@ -202,6 +209,13 @@ IsJoystick(int fd, char **name_return, SDL_JoystickGUID *guid)
     if (!name) {
         return 0;
     }
+
+#ifdef SDL_DEVICE_S30
+    if (inpid.vendor != 0xdead && inpid.product != 0xbeef) {
+        SDL_free(name);
+        return 0;
+    }
+#endif
 
 #ifdef SDL_JOYSTICK_HIDAPI
     if (!IsVirtualJoystick(inpid.vendor, inpid.product, inpid.version, name) &&
@@ -301,7 +315,7 @@ MaybeAddDevice(const char *path)
     }
 
 #ifdef DEBUG_INPUT_EVENTS
-    printf("Checking %s\n", path);
+    printf("Checking %s (%s)\n", path, name);
 #endif
 
     isstick = IsJoystick(fd, &name, &guid);
