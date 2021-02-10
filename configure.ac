@@ -2295,6 +2295,19 @@ AS_HELP_STRING([--enable-video-dummy], [use dummy video driver [[default=yes]]])
     fi
 }
 
+CheckPocketGoS30Video()
+{
+    AC_ARG_ENABLE(video-pocketgos30,
+AS_HELP_STRING([--enable-video-pocketgos30], [use pocketgos30 video driver [[default=yes]]]),
+                  , enable_video_pocketgos30=yes)
+    if test x$enable_video_pocketgos30 = xyes; then
+        AC_DEFINE(SDL_VIDEO_DRIVER_POCKETGOS30, 1, [ ])
+        SOURCES="$SOURCES $srcdir/src/video/pocketgos30/*.c"
+        have_video=yes
+        SUMMARY_video="${SUMMARY_video} pocketgos30"
+    fi
+}
+
 dnl Set up the QNX video driver if enabled
 CheckQNXVideo()
 {
