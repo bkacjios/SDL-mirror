@@ -90,6 +90,8 @@ static SDL_JoystickDriver *SDL_joystick_drivers[] = {
     &SDL_DUMMY_JoystickDriver
 #endif
 };
+
+static SDL_bool SDL_joystick_ignore_calibration = SDL_FALSE;
 static SDL_bool SDL_joystick_allows_background_events = SDL_FALSE;
 static SDL_Joystick *SDL_joysticks = NULL;
 static SDL_bool SDL_updating_joystick = SDL_FALSE;
@@ -97,6 +99,20 @@ static SDL_mutex *SDL_joystick_lock = NULL; /* This needs to support recursive l
 static SDL_atomic_t SDL_next_joystick_instance_id;
 static int SDL_joystick_player_count = 0;
 static SDL_JoystickID *SDL_joystick_players = NULL;
+
+#define JOY_MIN -32768
+#define JOY_MAX 32767
+
+struct calibration_struct {
+    Sint16 min_x;
+    Sint16 min_y;
+    Sint16 max_x;
+    Sint16 max_y;
+    Sint16 origin_x;
+    Sint16 origin_y;
+};
+
+static struct calibration_struct JOY_CALIB = { JOY_MIN, JOY_MIN, JOY_MAX, JOY_MAX, 0, 0 };
 
 void
 SDL_LockJoysticks(void)
@@ -209,6 +225,32 @@ SDL_JoystickAllowBackgroundEventsChanged(void *userdata, const char *name, const
     }
 }
 
+static void SDLCALL
+SDL_JoystickIgnoreCalibrationChanged(void *userdata, const char *name, const char *oldValue, const char *hint)
+{
+    if (hint && *hint == '1') {
+        SDL_joystick_ignore_calibration = SDL_TRUE;
+    } else {
+        SDL_joystick_ignore_calibration = SDL_FALSE;
+    }
+}
+
+static void SDLCALL
+SDL_JoystickCalibrationFileChanged(void *userdata, const char *name, const char *oldValue, const char *hint)
+{
+    FILE *outfile;
+
+    outfile = fopen(hint, "r");
+    if (outfile == NULL) {
+        return;
+    }
+
+    memset(&JOY_CALIB, 0, sizeof(struct calibration_struct));
+
+    fread(&JOY_CALIB, sizeof(struct calibration_struct), 1, outfile); 
+    fclose(outfile);
+}
+
 int
 SDL_JoystickInit(void)
 {
@@ -224,6 +266,12 @@ SDL_JoystickInit(void)
     /* See if we should allow joystick events while in the background */
     SDL_AddHintCallback(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS,
                         SDL_JoystickAllowBackgroundEventsChanged, NULL);
+
+    SDL_AddHintCallback(SDL_HINT_JOYSTICK_IGNORE_CALIBRATION,
+                        SDL_JoystickIgnoreCalibrationChanged, NULL);
+
+    SDL_AddHintCallback(SDL_HINT_JOYSTICK_CALIBRATION_FILE,
+                        SDL_JoystickCalibrationFileChanged, NULL);
 
 #if !SDL_EVENTS_DISABLED
     if (SDL_InitSubSystem(SDL_INIT_EVENTS) < 0) {
@@ -1291,6 +1339,21 @@ void SDL_PrivateJoystickRemoved(SDL_JoystickID device_instance)
     SDL_UnlockJoysticks();
 }
 
+static Sint32 SDL_ScaleBetween(float unscaledNum, float minAllowed, float maxAllowed, float min, float max) {
+    Sint32 scaled;
+    // Clamp the value to the min/max just incase it goes over or under
+    if (unscaledNum < min)
+        unscaledNum = min;
+    if (unscaledNum > max)
+        unscaledNum = max;
+    scaled = (maxAllowed - minAllowed) * (unscaledNum - min) / (max - min) + minAllowed;
+    if (scaled < minAllowed)
+        scaled = minAllowed;
+    if (scaled > maxAllowed)
+        scaled = maxAllowed;
+    return scaled;
+}
+
 int
 SDL_PrivateJoystickAxis(SDL_Joystick *joystick, Uint8 axis, Sint16 value)
 {
@@ -1332,6 +1395,22 @@ SDL_PrivateJoystickAxis(SDL_Joystick *joystick, Uint8 axis, Sint16 value)
         if ((value > info->zero && value >= info->value) ||
             (value < info->zero && value <= info->value)) {
             return 0;
+        }
+    }
+
+    if (SDL_joystick_ignore_calibration == SDL_FALSE) {
+        if (axis == 0) {
+            value -= JOY_CALIB.origin_x;
+            if (value > 0)
+                value = SDL_ScaleBetween(value, 0, JOY_MAX, 0, JOY_CALIB.max_x);
+            else if (value < 0)
+                value = SDL_ScaleBetween(value, JOY_MIN, 0, JOY_CALIB.min_x, 0);
+        } else if (axis == 1) {
+            value -= JOY_CALIB.origin_y;
+            if (value > 0)
+                value = SDL_ScaleBetween(value, 0, JOY_MAX, 0, JOY_CALIB.max_y);
+            else if (value < 0)
+                value = SDL_ScaleBetween(value, JOY_MIN, 0, JOY_CALIB.min_y, 0);
         }
     }
 
